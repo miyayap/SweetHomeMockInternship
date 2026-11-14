@@ -56,6 +56,12 @@ import com.eteks.sweethome3d.viewcontroller.HomeController;
 import com.eteks.sweethome3d.viewcontroller.PlanView;
 import com.eteks.sweethome3d.viewcontroller.View;
 
+import java.awt.EventQueue;
+import java.lang.reflect.InvocationTargetException;
+import java.util.ArrayList;
+import java.util.List;
+import com.eteks.sweethome3d.model.Selectable;
+
 /**
  * A printable component used to print or preview the furniture, the plan 
  * and the 3D view of a home.
@@ -343,47 +349,35 @@ public class HomePrintableComponent extends JComponent implements Printable {
     }
     
     View furnitureView = this.controller.getFurnitureController().getView();
-    if (furnitureView != null 
-        && (homePrint == null || homePrint.isFurniturePrinted())) {
-      FurnitureTable furnitureTable = null;
-      final FurnitureTable.FurnitureFilter furnitureFilter;
-      if (furnitureView instanceof FurnitureTable
-          && (homePrint == null
-              || homePrint.isPlanPrinted()
-              || homePrint.isView3DPrinted())) {
-        final Level selectedLevel = home.getSelectedLevel();
-        furnitureTable = (FurnitureTable)furnitureView;
-        furnitureFilter = furnitureTable.getFurnitureFilter();
-        furnitureTable.setFurnitureFilter(new FurnitureTable.FurnitureFilter() {
-            public boolean include(Home home, HomePieceOfFurniture piece) {
-              // Print only furniture at selected level when the plan or the 3D view is printed
-              return (furnitureFilter == null || furnitureFilter.include(home, piece))
-                  && piece.isAtLevel(selectedLevel)
-                  && (piece.getLevel() == null || piece.getLevel().isViewable());
-            }
-          });
-      } else {
-        furnitureFilter = null;
-      }
-      // Try to print next furniture view page      
-      pageExists = ((Printable)furnitureView).print(g2D, pageFormat, page);
+    if (furnitureView != null
+            && (homePrint == null || homePrint.isFurniturePrinted())) {
+      FurnitureTable furnitureTable = furnitureView instanceof FurnitureTable
+              ? (FurnitureTable)furnitureView
+              : null;
       if (furnitureTable != null) {
-        // Restore previous filter
-        ((FurnitureTable)furnitureView).setFurnitureFilter(furnitureFilter);
+        // Print furniture of all viewable levels with a Level column
+        furnitureTable.setLevelColumnPrinted(!this.home.getLevels().isEmpty());
+      }
+      try {
+        pageExists = ((Printable)furnitureView).print(g2D, pageFormat, page);
+      } finally {
+        if (furnitureTable != null) {
+          furnitureTable.setLevelColumnPrinted(false);
+        }
       }
       if (pageExists == PAGE_EXISTS
-          && !this.printablePages.contains(page)) {
+              && !this.printablePages.contains(page)) {
         this.printablePages.add(page);
         this.furniturePageCount++;
       }
     }
-    if (pageExists == NO_SUCH_PAGE 
-        && planView != null 
-        && (homePrint == null || homePrint.isPlanPrinted())) {
-      // Try to print next plan view page
-      pageExists = ((Printable)planView).print(g2D, pageFormat, page - this.furniturePageCount);
+    if (pageExists == NO_SUCH_PAGE
+            && planView != null
+            && (homePrint == null || homePrint.isPlanPrinted())) {
+      // Try to print next plan view page, level after level
+      pageExists = printPlanPage((Printable)planView, g2D, pageFormat, page - this.furniturePageCount);
       if (pageExists == PAGE_EXISTS
-          && !this.printablePages.contains(page)) {
+              && !this.printablePages.contains(page)) {
         this.printablePages.add(page);
         this.planPageCount++;
       }
@@ -529,4 +523,35 @@ public class HomePrintableComponent extends JComponent implements Printable {
       return pageFormat;
     }
   }
+
+  /**
+   * Prints the given page of the plan. Task 4: the PlanComponent now handles
+   * the iteration over viewable levels internally, so we just pass the page
+   * index straight through.
+   */
+  private int printPlanPage(Printable planPrintable, Graphics2D g2D, PageFormat pageFormat,
+                            int planPage) throws PrinterException {
+    return planPrintable.print(g2D, pageFormat, planPage);
+  }
+
+  /**
+   * Runs the given runnable in the Event Dispatch Thread and waits for its end.
+   */
+  private void runInEventDispatchThread(Runnable runnable) throws PrinterException {
+    if (EventQueue.isDispatchThread()) {
+      runnable.run();
+    } else {
+      try {
+        EventQueue.invokeAndWait(runnable);
+      } catch (InterruptedException ex) {
+        throw new InterruptedPrinterException("Print interrupted");
+      } catch (InvocationTargetException ex) {
+        if (ex.getCause() instanceof RuntimeException) {
+          throw (RuntimeException)ex.getCause();
+        }
+        throw new PrinterException(String.valueOf(ex.getCause()));
+      }
+    }
+  }
+
 }
